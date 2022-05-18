@@ -2,13 +2,14 @@ package controllers
 
 import (
 	licensingv1 "github.com/ebauman/klicense/api/v1"
-	"github.com/ebauman/klicense/common"
 	license2 "github.com/ebauman/klicense/license"
 	v1 "github.com/ebauman/klicense/operator/generated/controllers/licensing.cattle.io/v1"
 	wranglerCore "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
+	"strings"
 	"time"
 )
 
@@ -25,18 +26,50 @@ func (h *EntitlementHandler) OnEntitlementChanged(key string, entitlement *licen
 		return nil, nil
 	}
 
+	licenses := map[string]bool{}
+	unitMap := map[string]bool{}
+	var earliestExpiration time.Time
+
 	for _, g := range entitlement.Status.Grants {
-		// get the secret associated with the grant
-		licenseSecret, err := h.secretCache.Get(g.LicenseSecret.Namespace, g.LicenseSecret.Name)
-		if err != nil {
-			logrus.Error(err, "couldn't get license secret from entitlement ref")
-			err = h.processGrantDeletion(g.Id, entitlement)
-			if err != nil {
-				logrus.Error(err, "couldnt remove grant from entitlement")
+		// count things
+		licenses[g.Id] = true
+		if earliestExpiration.IsZero() {
+			earliestExpiration = g.NotAfter.Time
+		} else {
+			if g.NotAfter.Time.Before(earliestExpiration) {
+				earliestExpiration = g.NotAfter.Time
 			}
 		}
 
-		if _, ok := licenseSecret.Labels[common.LicensingLabel]; !ok {
+		unitMap[g.Unit] = true
+
+		cachedSecret, err := h.secretCache.Get(g.LicenseSecret.Namespace, g.LicenseSecret.Name)
+		if errors.IsNotFound(err) {
+			err = h.processGrantDeletion(g.Id, entitlement)
+			if err != nil {
+				logrus.Errorf("couldn't remove grant from entitlement: %s", err.Error())
+				return nil, err
+			}
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				_, err = h.entitlementClient.UpdateStatus(entitlement)
+				return err
+			})
+			if err != nil {
+				logrus.Errorf("error updating entitlement: %s", err.Error())
+				return nil, err
+			}
+			return nil, nil
+		}
+
+		if err != nil {
+			// something bad happened, and it wasn't us not finding the secret
+			logrus.Errorf("error getting secret from kubernetes: %s", err.Error())
+			return nil, err
+		}
+
+		licenseSecret := cachedSecret.DeepCopy()
+
+		if _, ok := licenseSecret.Labels[LicensingLabel]; !ok {
 			logrus.Error(err, "license secret not labeled as such, bailing")
 			return nil, err
 		}
@@ -65,7 +98,20 @@ func (h *EntitlementHandler) OnEntitlementChanged(key string, entitlement *licen
 		g.Amount = license.Grants[entitlement.Name]
 	}
 
-	_, err := h.entitlementClient.UpdateStatus(entitlement)
+	entitlement.Status.Licenses = len(licenses)
+	entitlement.Status.EarliestExpiration = metav1.NewTime(earliestExpiration)
+	var units []string
+	for k := range unitMap {
+		units = append(units, k)
+	}
+	entitlement.Status.Units = strings.Join(units, ",")
+
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		_, err := h.entitlementClient.UpdateStatus(entitlement)
+		return err
+	})
+
 	if err != nil {
 		logrus.Error(err, "error updating entitlement")
 		return nil, err
@@ -75,37 +121,6 @@ func (h *EntitlementHandler) OnEntitlementChanged(key string, entitlement *licen
 }
 
 func (h *EntitlementHandler) processGrantDeletion(key string, entitlement *licensingv1.Entitlement) error {
-	// when a grant is deleted we both need to removeNamespacedName it from the entitlement
-	// but also return corresponding requestCache to "Pending" for evaluation by the request controller
-	// (so we don't break anything if there is another license that can be used)
-
-	if entitlement.Status.Grants[key].Status == licensingv1.GrantStatusInUse {
-		// now we need to notify the request, place it into request mode for now
-		if grant, ok := entitlement.Status.Grants[key]; ok {
-			request, err := h.requestCache.Get(entitlement.Namespace, grant.Request.Name)
-			if errors.IsNotFound(err) {
-				// request doesn't exist, just delete it and move on!
-				delete(entitlement.Status.Grants, key)
-				return nil
-			}
-
-			if err != nil {
-				return err // something else went wrong, err out
-			}
-
-			// no err here, we have a valid request
-			request.Status.Status = licensingv1.UsageRequestStatusDiscover
-			request.Status.Grant = ""
-			request.Status.Message = "prior grant deleted"
-
-			_, err = h.requestClient.UpdateStatus(request)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	delete(entitlement.Status.Grants, key)
-
-	return nil
+	return ProcessGrantDeletion(h.requestCache.Get, h.requestClient.UpdateStatus, key, entitlement)
 }
+

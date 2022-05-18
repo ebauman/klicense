@@ -15,10 +15,14 @@ type RequestHandler struct {
 }
 
 func (r *RequestHandler) OnRequestChanged(key string, request *licensingv1.Request) (*licensingv1.Request, error) {
+	if request == nil {
+		return nil, nil
+	}
 	if !request.DeletionTimestamp.IsZero() {
 		// request is to be deleted
 		// we can free up the grant
-		entitlement, err := r.entitlementCache.Get(request.Spec.Entitlement.Namespace, request.Spec.Entitlement.Name)
+		cachedEntitlement, err := r.entitlementCache.Get(request.Namespace, request.Spec.Kind)
+		entitlement := cachedEntitlement.DeepCopy()
 		if err != nil {
 			logrus.Error(err, "unable to fetch entitlement")
 			return nil, err
@@ -46,7 +50,7 @@ func (r *RequestHandler) OnRequestChanged(key string, request *licensingv1.Reque
 		// 1 - there must be a grant available
 		// 2 - the grant must meet the usage requirements for the client
 		// (ignoring things like invalid grants since other controllers handle that)
-		entitlement, err := r.entitlementCache.Get(request.Spec.Entitlement.Namespace, request.Spec.Entitlement.Name)
+		entitlement, err := r.entitlementCache.Get(request.Namespace, request.Spec.Kind)
 		if err != nil {
 			logrus.Error(err, "unable to fetch entitlement")
 			return nil, err
@@ -60,7 +64,7 @@ func (r *RequestHandler) OnRequestChanged(key string, request *licensingv1.Reque
 				continue
 			}
 
-			if grant.Type != request.Spec.Type {
+			if grant.Unit != request.Spec.Unit {
 				continue
 			}
 
@@ -72,6 +76,7 @@ func (r *RequestHandler) OnRequestChanged(key string, request *licensingv1.Reque
 			// let's offer it to the client
 			request.Status.Status = licensingv1.UsageRequestStatusOffer
 			request.Status.Grant = grant.Id
+			request.Status.LicenseSecret = grant.LicenseSecret.Name
 
 			_, err := r.requestClient.UpdateStatus(request)
 			if err != nil {
@@ -98,7 +103,8 @@ func (r *RequestHandler) OnRequestChanged(key string, request *licensingv1.Reque
 			return nil, err
 		}
 	case licensingv1.UsageRequestStatusAcknowledged:
-		entitlement, err := r.entitlementCache.Get(request.Spec.Entitlement.Namespace, request.Spec.Entitlement.Name)
+		cachedEntitlement, err := r.entitlementCache.Get(request.Namespace, request.Spec.Kind)
+		entitlement := cachedEntitlement.DeepCopy()
 		if err != nil {
 			logrus.Error(err, "unable to fetch entitlement")
 			return nil, err

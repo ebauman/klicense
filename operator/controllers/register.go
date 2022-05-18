@@ -8,37 +8,25 @@ import (
 
 func Register(
 	ctx context.Context,
-	entitlementClient v1.EntitlementClient,
-	entitlementCache v1.EntitlementCache,
-	requestClient v1.RequestClient,
-	requestCache v1.RequestCache,
-	secretCache wranglerCore.SecretCache,
 	entitlementController v1.EntitlementController,
 	requestController v1.RequestController,
-	secretController wranglerCore.SecretController,
-	) {
+	secretController wranglerCore.SecretController) {
 
 	entitlementHandler := &EntitlementHandler{
-		entitlementClient: entitlementClient,
-		entitlementCache: entitlementCache,
-		requestClient: requestClient,
-		requestCache: requestCache,
-		secretCache: secretCache,
+		entitlementClient: entitlementController,
+		entitlementCache:  entitlementController.Cache(),
+		requestClient:     requestController,
+		requestCache:      requestController.Cache(),
+		secretCache:       secretController.Cache(),
 	}
 
 	requestHandler := &RequestHandler{
-		requestCache:      requestCache,
-		requestClient:     requestClient,
-		entitlementCache:  entitlementCache,
-		entitlementClient: entitlementClient,
-	}
-
-	secretHandler := &SecretHandler{
-		entitlementCache:  entitlementCache,
-		entitlementClient: entitlementClient,
+		requestCache:      requestController.Cache(),
+		requestClient:     requestController,
+		entitlementCache:  entitlementController.Cache(),
+		entitlementClient: entitlementController,
 	}
 
 	entitlementController.OnChange(ctx, "entitlement-handler", entitlementHandler.OnEntitlementChanged)
 	requestController.OnChange(ctx, "request-handler", requestHandler.OnRequestChanged)
-	secretController.OnChange(ctx, "secret-handler", secretHandler.OnSecretChanged)
 }

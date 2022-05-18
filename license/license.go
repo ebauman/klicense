@@ -1,7 +1,9 @@
 package license
 
 import (
+	"bytes"
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -9,9 +11,19 @@ import (
 	"encoding/pem"
 	"fmt"
 	"k8s.io/apimachinery/pkg/util/json"
+	"strconv"
 	"strings"
 	"time"
 )
+
+type License struct {
+	Id        string            `json:"id"`
+	Licensee  string            `json:"licensee"`
+	Metadata  map[string]string `json:"metadata"`
+	Grants    map[string]int    `json:"grants"`
+	NotBefore time.Time         `json:"notBefore"`
+	NotAfter  time.Time         `json:"notAfter"`
+}
 
 var publicKeys = make([]*rsa.PublicKey, 0)
 
@@ -30,15 +42,6 @@ func init() {
 
 		publicKeys = append(publicKeys, pubkey)
 	}
-}
-
-type License struct {
-	Id        string            `json:"id"`
-	Licensee  string            `json:"licensee"`
-	Metadata  map[string]string `json:"metadata"`
-	Grants    map[string]int    `json:"grants"`
-	NotBefore time.Time         `json:"notBefore"`
-	NotAfter  time.Time         `json:"notAfter"`
 }
 
 func Validate(licenseBytes []byte) (*License, error) {
@@ -86,4 +89,92 @@ func Validate(licenseBytes []byte) (*License, error) {
 	}
 
 	return &license, nil
+}
+
+func FlagsToMetadata(flags []string, license *License) error {
+	return flagsTo(flags, license, "metadata")
+}
+
+func FlagsToGrants(flags []string, license *License) error {
+	return flagsTo(flags, license, "grant")
+}
+
+func FlagToNotAfter(flag string, license *License) error {
+	return flagToTime(flag, license, "not-after")
+}
+
+func FlagToNotBefore(flag string, license *License) error {
+	return flagToTime(flag, license, "not-before")
+}
+
+func flagToTime(flag string, license *License, kind string) error {
+	t, err := time.Parse("2006-01-02", flag)
+	if err != nil {
+		return fmt.Errorf("invalid date %s: %s", flag, err)
+	}
+
+	if kind == "not-before" {
+		license.NotBefore = t
+	} else {
+		license.NotAfter = t
+	}
+
+	return nil
+}
+
+func flagsTo(flags []string, license *License, location string) error {
+	for _, v := range flags {
+		split := strings.Split(v, "=")
+		if len(split) <2 {
+			return fmt.Errorf("invalid %s: %s", location, v)
+		}
+
+		num, err := strconv.Atoi(split[1])
+		if err != nil {
+			return fmt.Errorf("invalid %s: %s is not a number", location, split[1])
+		}
+
+		if location == "metadata" {
+			license.Metadata[split[0]] = split[1]
+		} else {
+			license.Grants[split[0]] = num
+		}
+	}
+	return nil
+}
+
+func Generate(key *rsa.PrivateKey, license License) (string, error) {
+	licenseJson, err := json.Marshal(license)
+	if err != nil {
+		return "", err
+	}
+
+	base64License := encode(licenseJson)
+
+	hash := sha256.New()
+	_, err = hash.Write(base64License)
+	if err != nil {
+		return "", err
+	}
+	hashSum := hash.Sum(nil)
+
+	signature, err := rsa.SignPSS(rand.Reader, key, crypto.SHA256, hashSum, nil)
+	if err != nil {
+		return "", err
+	}
+
+	base64Signature := encode(signature)
+
+	return fmt.Sprintf("%s.%s", base64License, base64Signature), nil
+}
+
+func encode(in []byte) []byte {
+	var buf = &bytes.Buffer{}
+	encoder := base64.NewEncoder(base64.StdEncoding, buf)
+
+	encoder.Write(in)
+
+	encoder.Close()
+
+	return buf.Bytes()
 }

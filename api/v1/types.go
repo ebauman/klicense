@@ -10,7 +10,7 @@ var (
 	GrantStatusPending GrantStatus = "Pending"
 	GrantStatusInUse   GrantStatus = "InUse"
 
-	UsageRequestStatusDiscover UsageRequestStatus = "Discover"
+	UsageRequestStatusDiscover     UsageRequestStatus = "Discover"
 	UsageRequestStatusOffer        UsageRequestStatus = "Offer"
 	UsageRequestStatusAcknowledged UsageRequestStatus = "Acknowledged"
 )
@@ -19,9 +19,9 @@ type GrantStatus string
 
 type Grant struct {
 	Id            string                    `json:"id"`
-	Amount        int                       `json:"amount"`
-	Type          string                    `json:"type"`
-	NotBefore     metav1.Time               `json:"notBefore"`
+	Amount    int         `json:"amount"`
+	Unit      string      `json:"unit"`
+	NotBefore metav1.Time `json:"notBefore"`
 	NotAfter      metav1.Time               `json:"notAfter"`
 	LicenseSecret kubernetes.NamespacedName `json:"licenseSecret"`
 	Status        GrantStatus               `json:"grantStatus"`
@@ -30,6 +30,9 @@ type Grant struct {
 
 type EntitlementStatus struct {
 	Grants map[string]Grant `json:"grants"`
+	Licenses int `json:"licenses"`
+	Units string `json:"units"`
+	EarliestExpiration metav1.Time `json:"earliestExpiration"`
 }
 
 // +genclient
@@ -42,19 +45,19 @@ type Entitlement struct {
 	Status EntitlementStatus `json:"status,omitempty"`
 }
 
-
 type UsageRequestStatus string
 
 type RequestSpec struct {
-	Entitlement kubernetes.NamespacedName `json:"entitlement"`
-	Type        string                    `json:"type"`
-	Amount      int                       `json:"amount"`
+	Kind   string `json:"kind"`
+	Unit   string `json:"unit"`
+	Amount int    `json:"amount"`
 }
 
 type RequestStatus struct {
-	Status UsageRequestStatus `json:"status"`
-	Grant  string             `json:"grant"`
-	Message string `json:"message"`
+	Status        UsageRequestStatus `json:"status"`
+	Grant         string             `json:"grant"`
+	LicenseSecret string             `json:"licenseSecret"`
+	Message       string             `json:"message"`
 }
 
 // +genclient
