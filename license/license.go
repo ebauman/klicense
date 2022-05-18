@@ -11,10 +11,24 @@ import (
 	"encoding/pem"
 	"fmt"
 	"k8s.io/apimachinery/pkg/util/json"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+const (
+	grantString = `^(([a-zA-Z]{1})|([a-zA-Z]{1}[a-zA-Z]{1})|([a-zA-Z]{1}[0-9]{1})|([0-9]{1}[a-zA-Z]{1})|([a-zA-Z0-9][a-zA-Z0-9-_]{1,61}[a-zA-Z0-9]))\.([a-zA-Z]{2,6}|[a-zA-Z0-9-]{2,30}\.[a-zA-Z]{2,3})\/[a-zA-Z0-9]{1,}=[0-9]{1,}$`
+	entitlementName = `(([a-zA-Z]{1})|([a-zA-Z]{1}[a-zA-Z]{1})|([a-zA-Z]{1}[0-9]{1})|([0-9]{1}[a-zA-Z]{1})|([a-zA-Z0-9][a-zA-Z0-9-_]{1,61}[a-zA-Z0-9]))\.([a-zA-Z]{2,6}|[a-zA-Z0-9-]{2,30}\.[a-zA-Z]{2,3})`
+)
+
+var GrantStringRegexp *regexp.Regexp
+var EntitlementNameRegexp *regexp.Regexp
+
+func init() {
+	GrantStringRegexp = regexp.MustCompile(grantString)
+	EntitlementNameRegexp = regexp.MustCompile(entitlementName)
+}
 
 type License struct {
 	Id        string            `json:"id"`
@@ -124,6 +138,11 @@ func flagToTime(flag string, license *License, kind string) error {
 
 func flagsTo(flags []string, license *License, location string) error {
 	for _, v := range flags {
+		// check if the flag matches the regex
+		if !GrantStringRegexp.Match([]byte(v)) {
+			return fmt.Errorf("grant string %s is not of the format sub.doma.in/unit=123", v)
+		}
+
 		split := strings.Split(v, "=")
 		if len(split) <2 {
 			return fmt.Errorf("invalid %s: %s", location, v)
