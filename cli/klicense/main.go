@@ -1,4 +1,4 @@
-package klicense
+package main
 
 import "github.com/ebauman/klicense/cli/klicense/cmd"
 
