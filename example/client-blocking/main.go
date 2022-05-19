@@ -27,7 +27,7 @@ func main() {
 
 	logrus.Infof("calling license client async")
 
-	result := licenseClient.License("stigatron.compliance.cattle.io", "sdfsdfsdf", 5, "")
+	result := licenseClient.License("my.app.domain", "nodes", 5, "")
 	if result {
 		logrus.Info("success! licensed")
 	} else {

@@ -30,7 +30,7 @@ func main() {
 	logrus.Infof("calling license client async")
 
 	notify := make(chan bool, 1)
-	licenseClient.LicenseAsync("stigatron.compliance.cattle.io", "nodes", 5, notify, "")
+	licenseClient.LicenseAsync("my.app.domain", "nodes", 5, notify, "")
 
 	go func() {
 		licensed := <-notify
