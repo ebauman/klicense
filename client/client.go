@@ -6,6 +6,7 @@ import (
 	"github.com/ebauman/klicense/client/controllers"
 	"github.com/ebauman/klicense/client/generated/controllers/licensing.cattle.io"
 	v1 "github.com/ebauman/klicense/client/generated/controllers/licensing.cattle.io/v1"
+	license2 "github.com/ebauman/klicense/license"
 	"github.com/google/uuid"
 	wranglerCore "github.com/rancher/wrangler-api/pkg/generated/controllers/core"
 	wranglerKubeconfig "github.com/rancher/wrangler/pkg/kubeconfig"
@@ -106,6 +107,54 @@ func (l *LicenseClient) LicenseAsync(kind string, unit string, amount int, notif
 	}
 
 	l.notifiers[string(req.UID)] = notify
+}
+
+// Standalone looks for a license in the application's namespace that fulfills the kind, unit and amount parameters.
+// This method does not create a request object, nor does it require the presence of any custom resources.
+// Secrets with the label of licensing.cattle.io/license: "true" will be queried until a satisfactory license is found
+// If no satisfactory license is located, this method returns false
+func Standalone(kubeconfig string, kind string, unit string, amount int) (bool, error) {
+	clientConfig := wranglerKubeconfig.GetNonInteractiveClientConfig(kubeconfig)
+
+	cfg, err := clientConfig.ClientConfig()
+	if err != nil {
+		return false, fmt.Errorf("error obtaining client config: %s", err.Error())
+	}
+
+	wrangler, err := wranglerCore.NewFactoryFromConfig(cfg)
+	if err != nil {
+		return false, fmt.Errorf("error building wrangler factory: %s", err.Error())
+	}
+	
+	ns, _, err := clientConfig.Namespace()
+
+	secrets, err := wrangler.Core().V1().Secret().List(ns, metav1.ListOptions{
+		LabelSelector:        fmt.Sprintf("%s=%s", "licensing.cattle.io/license", "true"),
+	})
+	if errors.IsNotFound(err) {
+		return false, fmt.Errorf("no licensing secrets found")
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("error listing licensing secrets: %s", err.Error())
+	}
+
+	for _, s := range secrets.Items {
+		license, err := license2.ValidateSecret(&s)
+		if err != nil {
+			continue
+		}
+
+		for grantName, grantAmount := range license.Grants {
+			if grantName == fmt.Sprintf("%s/%s", kind, unit) {
+				if grantAmount >= amount {
+					return true, nil
+				}
+			}
+		}
+	}
+
+	return false, fmt.Errorf("no license found that satisfies request")
 }
 
 func (l *LicenseClient) setupLicense(kind string, unit string, amount int, applicationIdentifier string) *klicensev1.Request {
