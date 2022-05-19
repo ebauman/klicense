@@ -17,8 +17,8 @@ func init() {
 }
 
 func main() {
-	logrus.Infof("starting blocking licensing client")
-	logrus.Infof("this client will request a license and wait for completion")
+	logrus.Infof("starting standalone licensing client")
+	logrus.Infof("this client will search for a license secret and become either licensed or not (or error)")
 
 	licensed, err := client.Standalone("", "stigatron.compliance.cattle.io", "nodes", 5)
 
