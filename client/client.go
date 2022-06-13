@@ -27,6 +27,7 @@ type LicenseClient struct {
 }
 
 const licenseUsedAnnotation string = "licensing.cattle.io/used-by"
+const licenseAmountAnnotation string = "licensing.cattle.io/used-amount"
 
 func NewLicenseClient(kubeconfig string) (*LicenseClient, error) {
 	ctx := signals.SetupSignalContext()
@@ -161,6 +162,7 @@ func Standalone(kubeconfig string, kind string, unit string, amount int, applica
 					// annotate that the license is in use
 					sCopy := s.DeepCopy()
 					sCopy.Annotations[licenseUsedAnnotation] = applicationIdentifier
+					sCopy.Annotations[licenseAmountAnnotation] = string(rune(amount))
 					sCopy, err := wrangler.Core().V1().Secret().Update(sCopy)
 					if err != nil {
 						return false, fmt.Errorf("error reserving license for use: %s", err.Error())

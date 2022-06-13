@@ -20,7 +20,7 @@ func main() {
 	logrus.Infof("starting standalone licensing client")
 	logrus.Infof("this client will search for a license secret and become either licensed or not (or error)")
 
-	licensed, err := client.Standalone("", "my.app.domain", "nodes", 5)
+	licensed, err := client.Standalone("", "my.app.domain", "nodes", 5, "standlone-example")
 
 	if err != nil {
 		logrus.Fatal(err)
