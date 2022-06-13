@@ -22,9 +22,11 @@ type LicenseStatus string
 
 type LicenseClient struct {
 	requestClient v1.RequestClient
-	namespace string
-	notifiers map[string]chan<- bool
+	namespace     string
+	notifiers     map[string]chan<- bool
 }
+
+const licenseUsedAnnotation string = "licensing.cattle.io/used-by"
 
 func NewLicenseClient(kubeconfig string) (*LicenseClient, error) {
 	ctx := signals.SetupSignalContext()
@@ -53,8 +55,8 @@ func NewLicenseClient(kubeconfig string) (*LicenseClient, error) {
 
 	l := &LicenseClient{
 		requestClient: licensingFactory.Licensing().V1().Request(),
-		notifiers: make(map[string]chan <- bool),
-		namespace: ns,
+		notifiers:     make(map[string]chan<- bool),
+		namespace:     ns,
 	}
 
 	controllers.Register(
@@ -88,7 +90,7 @@ func (l *LicenseClient) License(kind string, unit string, amount int, applicatio
 	l.notifiers[string(req.UID)] = notify
 
 	for {
-		status := <- notify
+		status := <-notify
 		if status {
 			return true // blocking until licensed
 		}
@@ -113,7 +115,7 @@ func (l *LicenseClient) LicenseAsync(kind string, unit string, amount int, notif
 // This method does not create a request object, nor does it require the presence of any custom resources.
 // Secrets with the label of licensing.cattle.io/license: "true" will be queried until a satisfactory license is found
 // If no satisfactory license is located, this method returns false
-func Standalone(kubeconfig string, kind string, unit string, amount int) (bool, error) {
+func Standalone(kubeconfig string, kind string, unit string, amount int, applicationIdentifier string) (bool, error) {
 	clientConfig := wranglerKubeconfig.GetNonInteractiveClientConfig(kubeconfig)
 
 	cfg, err := clientConfig.ClientConfig()
@@ -125,11 +127,11 @@ func Standalone(kubeconfig string, kind string, unit string, amount int) (bool, 
 	if err != nil {
 		return false, fmt.Errorf("error building wrangler factory: %s", err.Error())
 	}
-	
+
 	ns, _, err := clientConfig.Namespace()
 
 	secrets, err := wrangler.Core().V1().Secret().List(ns, metav1.ListOptions{
-		LabelSelector:        fmt.Sprintf("%s=%s", "licensing.cattle.io/license", "true"),
+		LabelSelector: fmt.Sprintf("%s=%s", "licensing.cattle.io/license", "true"),
 	})
 	if errors.IsNotFound(err) {
 		return false, fmt.Errorf("no licensing secrets found")
@@ -140,6 +142,13 @@ func Standalone(kubeconfig string, kind string, unit string, amount int) (bool, 
 	}
 
 	for _, s := range secrets.Items {
+		// check if the license is in use
+		if a, ok := s.Annotations[licenseUsedAnnotation]; ok {
+			if a != applicationIdentifier {
+				continue
+			}
+		}
+
 		license, err := license2.ValidateSecret(&s)
 		if err != nil {
 			continue
@@ -148,6 +157,15 @@ func Standalone(kubeconfig string, kind string, unit string, amount int) (bool, 
 		for grantName, grantAmount := range license.Grants {
 			if grantName == fmt.Sprintf("%s/%s", kind, unit) {
 				if grantAmount >= amount {
+					// this license satisfies
+					// annotate that the license is in use
+					sCopy := s.DeepCopy()
+					sCopy.Annotations[licenseUsedAnnotation] = applicationIdentifier
+					sCopy, err := wrangler.Core().V1().Secret().Update(sCopy)
+					if err != nil {
+						return false, fmt.Errorf("error reserving license for use: %s", err.Error())
+					}
+
 					return true, nil
 				}
 			}
